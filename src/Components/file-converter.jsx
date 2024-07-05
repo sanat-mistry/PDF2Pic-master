@@ -1,7 +1,11 @@
 import { Box, CircularProgress, Grid } from "@mui/material";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 // import { FabricJSCanvas, useFabricJSEditor } from 'fabricjs-react'
 import *  as fabric  from 'fabric';
+import useEyeDropper from 'use-eye-dropper'
+import html2canvas from 'html2canvas';
+import { PDFDocument } from 'pdf-lib';
+
 var pdfjsLib = window["pdfjs-dist/build/pdf"];
 pdfjsLib.GlobalWorkerOptions.workerSrc = "./assets/js/pdf.worker.js";
 
@@ -43,12 +47,12 @@ var rawData = [
   [[863, 2985], [1435, 2985], [1435, 3048], [863, 3048]]
 ]
 
+var idTypeMap = {}
+
 
 function FileConverter({ pdfUrl, fileName }) {
   const myRef = React.createRef();
-  // const { editor, onReady } = useFabricJSEditor()
-
-  // const [open, setOpen] = useState(false);
+  const { open, close, isSupported } = useEyeDropper()
   const [loading, setLoading] = useState(false);
   const [imageUrls, setImageUrls] = useState([]);
   const [numOfPages, setNumOfPages] = useState(0);
@@ -56,8 +60,14 @@ function FileConverter({ pdfUrl, fileName }) {
   const [translatedTexts, setTranslatedTexts] = useState([])
   const [hoverBox, setHoverBox] = useState(null);
   const [imageDimensions, setImageDimensions] = useState({ width: 0, height: 0 });
+  const [selectedObjects,  setSelectedObjects] = useState([])
   const [canvas, setCanvas] = useState(null);
   const canvasRef = useRef(null);
+
+
+  // Properties
+
+
 
   useEffect(() => {
     let texts = []
@@ -89,31 +99,71 @@ function FileConverter({ pdfUrl, fileName }) {
       fabricCanvas.setWidth(imageDimensions.width);
       fabricCanvas.setHeight(imageDimensions.height);
       setCanvas(fabricCanvas);
+      fabricCanvas.on({
+        "object:added": (event) => handleAdd(event, canvas),
+        "object:removed": (event) => handleRemove(event, canvas),
+        "object:scaling": handleScaling,
+        "selection:created": (event) => handleSelect(event, canvas),
+        "selection:cleared": (event) => handleDeselect(event, canvas),
+      })
 
       return () => {
         fabricCanvas.dispose();
       };
     }
-}, [imageDimensions]);
+  }, [imageDimensions]);
+
+  const handleAdd = (event) => {
+    console.log(event);
+  }
+
+  const handleRemove = (event) => {
+    console.log(event);
+  }
+
+  const handleScaling = (obj) => {
+    if (!canvas) {
+      return
+    }
+    if (obj.target && obj.target.id && obj.target.height && obj.target.scaleY) {
+      if (idTypeMap[obj.target.id] == 'Text') {
+        let lastHeight
+        const updateTextSize = () => {
+          if (obj.target) {
+            if (obj.target.height && obj.target.scaleY) {
+              lastHeight = obj.target.height * obj.target.scaleY;
+            }
+
+            obj.target.set({
+              height: lastHeight || obj.target.height,
+              scaleY: 1,
+            });
+          }
+        };
+        updateTextSize();
+      }
+    }
+  }
+
+  const handleSelect = (event) => {
+    console.log(event);
+    setSelectedObjects(event.selected)
+  }
+
+  const handleDeselect = (event) => {
+    console.log(event);
+    setSelectedObjects([])
+  }
+
+  const handleDelete = (event) => {
+    console.log(event);
+    canvas.remove(canvas.getActiveObject())
+  }
 
 
   useEffect(() => {
     setLoading(false);
   }, [imageUrls]);
-
-  useEffect(() => {
-    if (hoverBox) console.log(hoverBox);
-  }, [hoverBox]);
-
-  // const handleClickOpen = (url, index) => {
-  //   setSelectedImage({ url, index });
-  //   setOpen(true);
-  // };
-
-  // const handleClose = () => {
-  //   setSelectedImage(null);
-  //   setOpen(false);
-  // };
 
   const UrlUploader = (url) => {
     fetch(url).then((response) => {
@@ -155,20 +205,6 @@ function FileConverter({ pdfUrl, fileName }) {
     setImageUrls((e) => [...e, ...imagesList]);
   };
 
-  useEffect(() => {
-    myRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
-  }, [imageUrls]);
-
-  // const downloadImage = (url, index) => {
-  //   const a = document.createElement("a");
-  //   a.href = url;
-  //   a.download = `${fileName}_${index + 1}.png`;
-  //   document.body.appendChild(a);
-  //   a.click();
-  //   document.body.removeChild(a);
-  //   handleClose();
-  // };
-
   const handleImageLoad = (event) => {
     const { width, height } = event.target;
     setImageDimensions({ width, height });
@@ -177,38 +213,98 @@ function FileConverter({ pdfUrl, fileName }) {
 
   const addRectangle = () => {
     if (canvas) {
-        const rect = new fabric.Rect({
-          left: 100,
-          top: 100,
-          fill: 'white',
-          width: 60,
-          height: 70,
-          hasControls: true, // Enable controls for resizing
-          lockMovementX: false, // Enable horizontal movement
-          lockMovementY: false, // Enable vertical movement,
-          selectable: true,
-
-        });
-        canvas.add(rect);
-
+      let id = Math.random()
+      const rect = new fabric.Rect({
+        id,
+        type: "rect",
+        left: 100,
+        top: 100,
+        fill: 'white',
+        width: 60,
+        height: 70,
+        hasControls: true, // Enable controls for resizing
+        lockMovementX: false, // Enable horizontal movement
+        lockMovementY: false, // Enable vertical movement,
+        selectable: true,
+      });
+      canvas.add(rect);
+      idTypeMap[id] = "Rectangle"
     }
-    // editor.addRectangle()
   };
 
   const addText = () => {
       if (canvas) {
-          const text = new fabric.Text('Hello,\n World!', {
-              left: 100,
-              top: 200,
-              fill: 'black',
-              hasControls: true, // Enable controls for resizing
-              lockMovementX: false, // Enable horizontal movement
-              lockMovementY: false, // Enable vertical movement
-          });
-          canvas.add(text);
+        let id = Math.random()
+        const text = new fabric.Text('Add Text here..', {
+          id,
+          left: 100,
+          top: 200,
+          fill: 'black',
+          fontSize: 12,
+          hasControls: true, // Enable controls for resizing
+          lockMovementX: false, // Enable horizontal movement
+          lockMovementY: false, // Enable vertical movement
+        });
+        canvas.add(text);
+        idTypeMap[id] = "Text"
       }
-    // editor.addText()
+  };
 
+  const handleObjectUpdate = (object, type) => {
+    let active = canvas.getActiveObject()
+    if (type == "Rectangle") {
+      active.set('fill', object.fill)
+    } else {
+      console.log(object.text);
+      active.set({
+        'fill': object.fill,
+        'text': object.text,
+        'fontSize': object.fontSize
+      })
+    }
+    
+    canvas.renderAll()
+  }
+
+  const handleExport = async () => {
+    const div = document.getElementById('image-wrapper');
+    if (div) {
+      const canvas = await html2canvas(div);
+      const imageData = canvas.toDataURL('image/png');
+
+      // Create a PDF document
+      const pdfDoc = await PDFDocument.create();
+      const image = await pdfDoc.embedPng(imageData);
+
+      // Get the dimensions of the image
+      const imageDims = image.scale(1);
+
+      // Add a page with the same dimensions as the image
+      const page = pdfDoc.addPage([imageDims.width, imageDims.height]);
+
+      // Draw the image onto the page
+      page.drawImage(image, {
+          x: 0,
+          y: 0,
+          width: imageDims.width,
+          height: imageDims.height,
+      });
+
+      // Serialize the PDF document to bytes (a Uint8Array)
+      const pdfBytes = await pdfDoc.save();
+
+      // Create a blob from the PDF bytes and create a URL for it
+      const blob = new Blob([pdfBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+
+      // Create a link element and trigger the download
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'div.pdf';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    }
   };
 
 
@@ -222,10 +318,11 @@ function FileConverter({ pdfUrl, fileName }) {
           {imageUrls.length > 0 && (
             <div class="flex gap-4 w-full">
               <div class="flex-1 min-w-0">
-                <div>
+                {/* <div>
+                  <SquareOutlined></SquareOutlined>
                   <div class="px-2 py-2 bg-primary bg-opacity-20 hover:bg-opacity-50" onClick={addRectangle}>Add Rectangle</div>
                   <div class="px-2 py-2 bg-primary bg-opacity-20 hover:bg-opacity-50" onClick={addText}>Add Text</div>
-                </div>
+                </div> */}
                 {/* {imageUrls.map((url, index) => ( */}
                   <div class="relative">
                     <div id="image-wrapper" class="border-2 border-slate-200 rounded-xl relative ">
@@ -262,20 +359,21 @@ function FileConverter({ pdfUrl, fileName }) {
                   </div>
                 {/* ))} */}
               </div>
-              <div className="w-80 h-[90vh] sticky top-[5vh] flex flex-col border-2 border-slate-200 rounded-xl overflow-hidden">
-                <div class="bg-sky-300 p-4 ">Translated text</div>
-                <div class="flex flex-col min-h-0 flex-1 p-4 gap-4 overflow-auto">
-                  { 
-                    translatedTexts.map((text, index) => {
-                      return <div class="w-full rounded border border-slate-300 p-4 hover:border-primary" key={index}
-                        onMouseEnter={() => setHoverBox(text)}
-                        onMouseLeave={() => setHoverBox(null)}
-                      >
-                        {text.translatedText}
-                      </div>
-                    })
+              <div className="w-80 h-[90vh] sticky top-[5vh] bg-white flex flex-col border-2 border-slate-200 rounded-xl overflow-hidden">
+                <div class="m-4 flex flex-col gap-2">  
+                  <button className="w-full bg-primary text-white px-4 py-1 rounded" onClick={addRectangle}>Add Rectangle</button>
+                  <button className="w-full bg-primary text-white px-4 py-1 rounded" onClick={addText}>Add Text</button>
+                  <button className="w-full bg-primary text-white px-4 py-1 rounded" onClick={handleExport}>Export as PDF</button>
+                </div>
+                <hr></hr>
+
+                <div class="m-4 flex flex-col gap-2">                  
+                  {
+                    selectedObjects.length > 0 &&
+                    <ObjectProperties object={selectedObjects[0]} updateObject={handleObjectUpdate} deleteObject={handleDelete} />
                   }
                 </div>
+
               </div>
             </div>
           )}
@@ -283,6 +381,80 @@ function FileConverter({ pdfUrl, fileName }) {
       )}
     </Box>
   );
+}
+
+const ObjectProperties = ({object, updateObject, deleteObject}) => {
+  
+  let type = idTypeMap[object.id]
+  
+  const [state, setState] = useState({
+    fill: object.fill,
+    text: object.text,
+    fontSize: object.fontSize
+  })
+  const { open, close, isSupported } = useEyeDropper()
+  const [color, setColor] = useState('#fff')
+  
+  const pickColor = useCallback(() => {
+      const openPicker = async () => {
+        try {
+          const color = await open()
+          if (color && color.sRGBHex) {
+            handleUpdate('fill', color.sRGBHex)
+          }
+        } catch (e) {
+          console.error(e)
+        }
+      }
+      openPicker()
+  }, [open])
+  
+
+  const handleUpdate = (key, val) => {
+    let newState = {...state}
+    newState[key] = val
+    setState(newState)
+  }
+
+  useEffect(() => {
+    updateObject(state, type)
+  }, [state])
+
+  return <>
+    { type && <div className="text-left font-bold">Edit {type}</div>}
+
+    {/* Rectangle */}
+    { type == "Rectangle" &&
+      <div className="flex flex-col gap-2 items-start">
+        <div className="flex justify-between w-full">
+          <span>Fill Color</span>
+          <button onClick={pickColor} className="underline text-primary text-sm">Pick color</button>
+        </div>
+        <input className="border border-slate-200 rounded w-full" value={state.fill} type="text" onChange={(e) => handleUpdate("fill", e.target.value)} />
+        <button className="w-full bg-red-500 text-white px-4 py-1 rounded" onClick={deleteObject}>Delete</button>
+      </div>
+    }
+
+    {/* Text */}
+    { type == "Text" &&
+      <div className="flex flex-col gap-2 items-start">
+        
+        <div className="flex justify-between w-full">
+          <span>Fill Color</span>
+          <button onClick={pickColor} className="underline text-primary text-sm">Pick color</button>
+        </div>
+        <input className="border border-slate-200 rounded w-full" value={state.fill} type="text" onChange={(e) => handleUpdate("fill", e.target.value)} />
+        <hr></hr>
+        <span>Fill Color</span>
+        <textarea className="border p-1 border-slate-200 rounded w-full" value={state.text} type="text" onChange={(e) => handleUpdate("text", e.target.value)} />
+        <hr></hr>
+        <span>Font size</span>
+        <textarea className="border p-1 border-slate-200 rounded w-full" value={state.fontSize} type="text" onChange={(e) => handleUpdate("fontSize", e.target.value)} />
+        <button className="w-full bg-red-500 text-white px-4 py-1 rounded" onClick={deleteObject}>Delete</button>
+        
+      </div>
+    }
+  </>
 }
 
 export default FileConverter;
